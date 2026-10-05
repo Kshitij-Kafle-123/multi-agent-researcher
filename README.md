@@ -12,7 +12,7 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-Copy `.env.example` to `.env`. Set `GROQ_API_KEY` to enable a separate AI summary for every collected technology story. The default model is `openai/gpt-oss-120b`; change `GROQ_MODEL` if you prefer another model enabled for your Groq account. Without a key, the app shows article excerpts instead. News collection uses the public BBC Technology RSS feed and does not require a news API key.
+Copy `.env.example` to `.env`. Set `GROQ_API_KEY` to enable autonomous source selection and a separate AI summary for every collected technology story. The default model is `openai/gpt-oss-120b`; change `GROQ_MODEL` if you prefer another model enabled for your Groq account. Without a key, the workflow deterministically checks configured feeds and shows article excerpts instead. News collection uses public RSS feeds and does not require a news API key.
 
 ## Run
 
@@ -24,6 +24,8 @@ streamlit run ui.py
 
 Open the local URL Streamlit prints, then select **Fetch and analyze this week’s news**. The page shows the generated digest, trends, and article assessments.
 
+The UI saves a compressed daily digest in a browser cookie. That browser reuses the saved digest after refresh and cannot generate another one until midnight in `APP_TIMEZONE` (defaults to `Asia/Kathmandu`). The cookie includes the digest and trends; article assessments are included when they fit. Large digests are shortened to stay within browser cookie limits. Clearing cookies or using another browser starts a separate daily cache.
+
 Or run the workflow in the terminal:
 
 ```bash
@@ -34,17 +36,24 @@ The program prints its digest and a collection count. It keeps articles publishe
 
 ## Architecture
 
-- `app/agents/` contains focused research, validation, fact estimation, knowledge, technology filtering, trend, and summary agents.
-- `app/utils/` contains feed loading, page extraction, deduplication, and heuristic scoring.
-- `app/schemas.py` defines Pydantic data models; `app/state.py` defines the typed graph state.
-- `app/graph.py` assembles the workflow; `main.py` invokes it and displays the result.
+- `app/agents/` contains the research planner and focused analysis agents.
+- `app/prompts/` holds agent role prompts. The planner and writer prompts are loaded into LLM calls.
+- `app/orchestrator/` routes workflow stages and executes the analysis nodes; `app/workflows/` exposes the runnable research workflow.
+- `app/tools/` wraps RSS loading and article enrichment; `app/utils/` provides feed parsing, scraping, deduplication, and scoring helpers.
+- `app/memory/short_term.py` creates per-run state. `app/state.py` defines its type and `app/schemas.py` defines Pydantic data models.
+- `app/models/llm.py` centralizes chat model setup. `main.py` and `ui.py` invoke the workflow.
+
+This project uses in-memory workflow state and public RSS/article pages, so it does not include persistent databases, vector storage, arbitrary filesystem tools, or a scheduled background worker.
 
 ## LangGraph flow
 
 ```text
-START → research → validation → fact_check → knowledge → tech_filter
+START → research_planner ⇄ collect (up to MAX_RESEARCH_ROUNDS)
+      → validation → fact_check → knowledge → tech_filter
       → trend_analysis → summary → END
 ```
+
+The planner chooses whether another configured source is useful and selects only from the allowlisted RSS feeds in `app/config.py`. The loop has a configurable upper bound (`MAX_RESEARCH_ROUNDS`, default 3), so a model response cannot trigger unbounded browsing or arbitrary URL fetching. Analysis stages then run after collection finishes.
 
 Add a node with `build_graph(extra_nodes={"validation": my_node})` to insert it immediately after the named stage. The built-in agents do not need to be rewritten to extend the graph.
 

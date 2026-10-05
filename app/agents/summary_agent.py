@@ -2,7 +2,9 @@ import logging
 import re
 import time
 
-from app.config import GROQ_API_KEY, GROQ_MODEL
+from app.config import GROQ_API_KEY
+from app.agents.instruction_loader import load_agent_instructions
+from app.models.llm import create_chat_model
 from app.schemas import Article, TrendReport
 
 logger = logging.getLogger(__name__)
@@ -63,14 +65,13 @@ def summarize(articles: list[Article], trends: TrendReport | None) -> dict[str, 
             logger.warning("GROQ_API_KEY is unset; using article excerpts instead of AI summaries")
         return {"summary": _digest(articles, trends), "tech_articles": articles}
     try:
-        from langchain_groq import ChatGroq
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        model = ChatGroq(model=GROQ_MODEL, temperature=0.2, max_retries=0, timeout=60)
+        model = create_chat_model(temperature=0.2, timeout=60)
         summarized = []
         for article in articles:
             messages = [
-                SystemMessage(content="Summarize this news article in 2 to 4 concise sentences. Use only the supplied title and article text. Do not infer unsupported facts. State the main development and its significance to technology readers."),
+                SystemMessage(content=load_agent_instructions("writer.md")),
                 HumanMessage(content=f"Title: {article.title}\nSource: {article.source}\nArticle text:\n{article.content[:3000] or article.title}"),
             ]
             summary = None

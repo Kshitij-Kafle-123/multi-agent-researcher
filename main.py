@@ -1,19 +1,15 @@
 import logging
 
-from app.graph import build_graph
-from app.state import NewsState
+from app.memory.short_term import new_news_state
+from app.workflows.research_workflow import build_research_workflow
 
 logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    workflow = build_graph()
-    initial_state: NewsState = {
-        "articles": [], "validated_articles": [], "knowledge": [],
-        "tech_articles": [], "summary": "", "trend_report": None,
-    }
+    workflow = build_research_workflow()
     try:
-        result = workflow.invoke(initial_state)
+        result = workflow.invoke(new_news_state())
     except Exception:
         logger.exception("News workflow failed")
         raise

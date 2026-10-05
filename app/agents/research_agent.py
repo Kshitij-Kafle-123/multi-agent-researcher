@@ -2,10 +2,10 @@ import logging
 from datetime import datetime, time
 from datetime import timedelta
 
+from app.config import RSS_FEEDS
 from app.schemas import Article
 from app.utils.deduplicator import deduplicate
-from app.utils.rss_loader import load_rss_articles
-from app.utils.scraper import enrich_article
+from app.tools.news_sources import enrich_articles, load_feed
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +26,11 @@ def _current_week_articles(articles: list[Article]) -> list[Article]:
     return current_week
 
 
-def research() -> dict[str, list[Article]]:
-    candidates = deduplicate(_current_week_articles(load_rss_articles()))
+def research(feed_url: str | None = None) -> dict[str, list[Article]]:
+    feeds = [feed_url] if feed_url else RSS_FEEDS
+    raw_articles = [article for feed in feeds for article in load_feed(feed)]
+    candidates = deduplicate(_current_week_articles(raw_articles))
     # Scraping is deliberately bounded so one run remains useful when feeds are busy.
-    articles = [enrich_article(article) for article in candidates[:60]]
+    articles = enrich_articles(candidates[:60])
     logger.info("Research collected %d unique articles from the current week", len(articles))
     return {"articles": articles}
