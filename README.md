@@ -24,7 +24,7 @@ streamlit run ui.py
 
 Open the local URL Streamlit prints, then select **Fetch and analyze this week’s news**. The page shows the generated digest, trends, and article assessments.
 
-The UI saves a compressed daily digest in a browser cookie. That browser reuses the saved digest after refresh and cannot generate another one until midnight in `APP_TIMEZONE` (defaults to `Asia/Kathmandu`). The cookie includes the digest and trends; article assessments are included when they fit. Large digests are shortened to stay within browser cookie limits. Clearing cookies or using another browser starts a separate daily cache.
+The UI saves the complete compressed workflow result in browser `localStorage`, including the digest, trends, collected articles, and assessments. It restores that result after refresh and prevents another generation in the same browser until midnight in `APP_TIMEZONE` (defaults to `Asia/Kathmandu`). Clearing site data or using another browser starts a separate daily cache. Browser storage has a per-site quota, but the app no longer truncates content to meet a cookie-size cap.
 
 Or run the workflow in the terminal:
 

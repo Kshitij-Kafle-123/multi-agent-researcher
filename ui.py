@@ -1,12 +1,11 @@
 import logging
 
-import extra_streamlit_components as stx
 import streamlit as st
+from streamlit_local_storage import LocalStorage
 
 from app.config import GROQ_API_KEY, GROQ_MODEL
-from app.memory.daily_cookie_cache import (
-    COOKIE_NAME,
-    cookie_expiration,
+from app.memory.daily_local_storage import (
+    STORAGE_KEY,
     decode_daily_result,
     encode_daily_result,
     today_key,
@@ -26,11 +25,6 @@ def _run_news() -> dict:
     return _workflow().invoke(new_news_state())
 
 
-@st.fragment
-def _cookie_manager():
-    return stx.CookieManager(key="daily_news_cookie_manager")
-
-
 st.set_page_config(page_title="Tech News Intelligence", page_icon="🗞️", layout="wide")
 st.title("🗞️ Tech News Intelligence")
 st.caption("This week’s technology stories, gathered through a bounded autonomous research loop and analyzed by the news workflow.")
@@ -39,42 +33,35 @@ if GROQ_API_KEY:
 else:
     st.warning("GROQ_API_KEY is missing. Add it to .env locally or the platform’s secrets settings before generating the digest.")
 
-cookie_manager = _cookie_manager()
+local_storage = LocalStorage(key="daily_news_local_storage")
 today = today_key()
-cached_result = decode_daily_result(cookie_manager.get(COOKIE_NAME), today)
+cached_result = decode_daily_result(local_storage.getItem(STORAGE_KEY), today)
 if cached_result:
     st.session_state["news_result"] = cached_result
     st.session_state["news_result_day"] = today
-    st.session_state["news_result_cache_version"] = 3
+    st.session_state["news_result_cache_version"] = 4
 elif (
     st.session_state.get("news_result_day") != today
-    or st.session_state.get("news_result_cache_version") != 3
+    or st.session_state.get("news_result_cache_version") != 4
 ):
     st.session_state.pop("news_result", None)
     st.session_state.pop("news_result_day", None)
 
 already_generated_today = st.session_state.get("news_result_day") == today and st.session_state.get("news_result")
 if already_generated_today:
-    st.info("Today’s news digest is saved in this browser and will be reused until midnight.")
+    st.info("Today’s complete news digest is saved in this browser and will be reused until midnight.")
 elif st.button("Fetch and analyze this week’s news", type="primary"):
     try:
         with st.spinner("Choosing news sources, collecting articles, and preparing the summary…"):
             fresh_result = _run_news()
-            cookie_value, summary_truncated = encode_daily_result(fresh_result, today)
-            cookie_manager.set(
-                COOKIE_NAME,
-                cookie_value,
-                expires_at=cookie_expiration(),
-                path="/",
-                same_site="lax",
-            )
-            restored_result = decode_daily_result(cookie_value, today)
+            saved_value = encode_daily_result(fresh_result, today)
+            local_storage.setItem(STORAGE_KEY, saved_value, key=f"save_daily_news_{today}")
+            restored_result = decode_daily_result(saved_value, today)
             if restored_result is None:
-                raise ValueError("The browser could not restore the saved daily digest")
-            restored_result["summary_truncated"] = summary_truncated
+                raise ValueError("The daily digest could not be restored from browser storage")
             st.session_state["news_result"] = restored_result
             st.session_state["news_result_day"] = today
-            st.session_state["news_result_cache_version"] = 3
+            st.session_state["news_result_cache_version"] = 4
             st.session_state.pop("news_error", None)
     except Exception as exc:
         logger.exception("Web UI news workflow failed")
@@ -95,11 +82,6 @@ if result:
 
     st.subheader("Daily Tech Summary")
     st.markdown(result.get("summary") or "No summary was generated.")
-    if result.get("summary_truncated"):
-        st.warning("This digest was shortened to fit the browser cookie size limit. The browser will still reuse it for today.")
-    if result.get("assessments_saved") is False:
-        st.caption("Article assessments were omitted from the cookie to keep the saved digest within browser limits.")
-
     report = result.get("trend_report")
     if report:
         with st.expander("Trends"):
@@ -120,7 +102,7 @@ if result:
     with st.expander(f"Article assessments ({technology_count})"):
         if not articles:
             if technology_count:
-                st.info("Article assessments were not saved in the browser cookie; the daily digest above is available.")
+                st.info("Article assessment details are unavailable in the saved browser data.")
             else:
                 st.info("No technology stories were found for this week.")
         for article in articles:
