@@ -2,8 +2,7 @@ from collections.abc import Callable
 
 from langgraph.graph import END, START, StateGraph
 
-from app.agents.autonomous_research_agent import collect_from_selected_feed, plan_research
-from app.orchestrator.dispatcher import after_research_plan
+from app.agents.autonomous_research_agent import research_node
 from app.orchestrator.executor import (
     fact_check_node,
     knowledge_node,
@@ -31,8 +30,7 @@ def build_graph(extra_nodes: dict[str, Callable[[NewsState], dict]] | None = Non
         ("summary", summary_node),
     ]
     builder = StateGraph(NewsState)
-    builder.add_node("research_planner", plan_research)
-    builder.add_node("collect", collect_from_selected_feed)
+    builder.add_node("research", research_node)
     for name, node in stages:
         builder.add_node(name, node)
     insertions: dict[str, list[str]] = {}
@@ -46,12 +44,8 @@ def build_graph(extra_nodes: dict[str, Callable[[NewsState], dict]] | None = Non
         route.append(name)
         route.extend(insertions.get(name, []))
     route.extend(insertions.get(END, []))
-    builder.add_edge(START, "research_planner")
-    builder.add_conditional_edges("research_planner", after_research_plan, {
-        "collect": "collect",
-        "validation": route[0],
-    })
-    builder.add_edge("collect", "research_planner")
+    builder.add_edge(START, "research")
+    builder.add_edge("research", route[0])
     for current, following in zip(route, route[1:]):
         builder.add_edge(current, following)
     builder.add_edge(route[-1], END)

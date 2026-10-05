@@ -12,7 +12,7 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-Copy `.env.example` to `.env`. Set `GROQ_API_KEY` to enable autonomous source selection and Groq summaries for every collected technology story. The default model is `openai/gpt-oss-120b`; change `GROQ_MODEL` if you prefer another model enabled for your Groq account. A Groq key is required to generate a digest with technology stories; the app reports an error instead of substituting raw article excerpts when Groq is unavailable. Streamlit deployments can provide `GROQ_API_KEY` and `GROQ_MODEL` through `st.secrets`. News collection uses public RSS feeds and does not require a news API key.
+Copy `.env.example` to `.env`. Set `GROQ_API_KEY` to enable the tool-using research agent and Groq summaries. The default model is `openai/gpt-oss-120b`; change `GROQ_MODEL` if you prefer another model enabled for your Groq account. Streamlit deployments can provide `GROQ_API_KEY` and `GROQ_MODEL` through `st.secrets`. Without a Groq key, collection falls back to the configured RSS feeds. News collection uses public RSS feeds and does not require a news API key.
 
 ## Run
 
@@ -36,24 +36,28 @@ The program prints its digest and a collection count. It keeps articles publishe
 
 ## Architecture
 
-- `app/agents/` contains the research planner and focused analysis agents.
-- `app/prompts/` holds agent role prompts. The planner and writer prompts are loaded into LLM calls.
+- `app/agents/` contains the tool-using research agent, optional A2A server/client adapters, and focused analysis agents.
+- `app/prompts/` holds agent role prompts. The researcher and writer prompts are loaded into LLM calls.
 - `app/orchestrator/` routes workflow stages and executes the analysis nodes; `app/workflows/` exposes the runnable research workflow.
 - `app/tools/` wraps RSS loading and article enrichment; `app/utils/` provides feed parsing, scraping, deduplication, and scoring helpers.
 - `app/memory/short_term.py` creates per-run state. `app/state.py` defines its type and `app/schemas.py` defines Pydantic data models.
 - `app/models/llm.py` centralizes chat model setup. `main.py` and `ui.py` invoke the workflow.
 
-This project uses in-memory workflow state and public RSS/article pages, so it does not include persistent databases, vector storage, arbitrary filesystem tools, or a scheduled background worker.
+This project uses in-memory workflow state and public RSS/article pages, so it does not include persistent databases, vector storage, or a scheduled background worker.
+
+### A2A research agent
+
+The research agent is available as an A2A JSON-RPC service. Start it in a separate terminal with `python -m app.agents.a2a_server`; its Agent Card is served at `http://127.0.0.1:8765/.well-known/agent-card.json`. The workflow calls this service over A2A when `A2A_RESEARCH_AGENT_URL=http://127.0.0.1:8765` is set. If the URL is unset, the workflow invokes the same agent locally. A2A follows the official Python SDK's Agent Card, executor, task/message, and JSON-RPC route model.
 
 ## LangGraph flow
 
 ```text
-START → research_planner ⇄ collect (up to MAX_RESEARCH_ROUNDS)
+START → research_agent (RSS and Google Search scraper tools)
       → validation → fact_check → knowledge → tech_filter
       → trend_analysis → summary → END
 ```
 
-The planner chooses whether another configured source is useful and selects only from the allowlisted RSS feeds in `app/config.py`. The loop has a configurable upper bound (`MAX_RESEARCH_ROUNDS`, default 3), so a model response cannot trigger unbounded browsing or arbitrary URL fetching. Analysis stages then run after collection finishes.
+The research agent receives both RSS and Google Search scraping tools and decides which to use for the request. When configured, the workflow and research agent communicate over A2A JSON-RPC; the research service advertises its capabilities with an Agent Card.
 
 Add a node with `build_graph(extra_nodes={"validation": my_node})` to insert it immediately after the named stage. The built-in agents do not need to be rewritten to extend the graph.
 

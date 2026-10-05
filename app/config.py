@@ -28,7 +28,7 @@ GROQ_API_KEY = _setting("GROQ_API_KEY")
 GROQ_MODEL = _setting("GROQ_MODEL", "openai/gpt-oss-120b")
 MAX_ARTICLES_PER_FEED = int(_setting("MAX_ARTICLES_PER_FEED", "12"))
 REQUEST_TIMEOUT_SECONDS = int(_setting("REQUEST_TIMEOUT_SECONDS", "12"))
-MAX_RESEARCH_ROUNDS = max(1, int(_setting("MAX_RESEARCH_ROUNDS", "3")))
+A2A_RESEARCH_AGENT_URL = _setting("A2A_RESEARCH_AGENT_URL")
 APP_TIMEZONE = ZoneInfo(_setting("APP_TIMEZONE", "Asia/Kathmandu"))
 logging.basicConfig(
     level=getattr(logging, _setting("LOG_LEVEL", "INFO").upper(), logging.INFO),

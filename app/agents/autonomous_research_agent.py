@@ -1,72 +1,99 @@
-"""Bounded planner that chooses which configured news feed to research next."""
+"""Tool-using technology research agent and workflow adapter."""
 
 import json
 import logging
+from datetime import datetime, time, timedelta
 
-from app.config import GROQ_API_KEY, MAX_RESEARCH_ROUNDS, RSS_FEEDS
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+
 from app.agents.instruction_loader import load_agent_instructions
+from app.config import A2A_RESEARCH_AGENT_URL, GROQ_API_KEY, RSS_FEEDS
 from app.models.llm import create_chat_model
+from app.schemas import Article
 from app.state import NewsState
+from app.tools.news_sources import google_search_articles, load_rss_articles
+from app.utils.deduplicator import deduplicate
 
 logger = logging.getLogger(__name__)
 
 
-def plan_research(state: NewsState) -> dict[str, object]:
-    searched = state.get("searched_feeds", [])
-    remaining = [feed for feed in RSS_FEEDS if feed not in searched]
-    rounds = state.get("research_rounds", 0)
-    articles = state.get("articles", [])
-    if not remaining or rounds >= MAX_RESEARCH_ROUNDS:
-        return {"next_feed": None, "research_decision": "finish"}
+@tool
+def search_rss_feeds(query: str = "") -> str:
+    """Read configured technology-news RSS feeds and return article records as JSON."""
+    del query  # The feed entries are supplied as evidence; the agent selects relevant ones.
+    records = [article.model_dump(mode="json") for article in load_rss_articles(RSS_FEEDS)]
+    return json.dumps(records, ensure_ascii=False)
 
-    # Let the model decide whether more collection is useful and which approved
-    # feed to use. It cannot introduce URLs or invoke arbitrary tools.
-    if GROQ_API_KEY:
+
+@tool
+def search_google_news(query: str) -> str:
+    """Search Google for technology news and return scraped article records as JSON."""
+    records = [article.model_dump(mode="json") for article in google_search_articles(query)]
+    return json.dumps(records, ensure_ascii=False)
+
+
+class ResearchAgent:
+    """Declarative agent configuration: identity, model, instructions and tools."""
+
+    name = "research_agent"
+    description = "Finds current technology news from RSS feeds and Google Search."
+    tools = [search_rss_feeds, search_google_news]
+
+    def __init__(self):
+        self.instructions = load_agent_instructions("researcher.md")
+
+    def invoke(self, request: str) -> list[Article]:
+        if not GROQ_API_KEY:
+            # Preserve a useful local mode when model credentials are absent.
+            return _local_research()
+        agent = create_react_agent(create_chat_model(temperature=0, timeout=45), self.tools)
+        response = agent.invoke({
+            "messages": [
+                ("system", self.instructions),
+                ("user", request + " Return a JSON array of article objects using the tool results."),
+            ]
+        })
+        content = str(response["messages"][-1].content)
         try:
-            prompt = {
-                "agent_instructions": load_agent_instructions("planner.md"),
-                "article_count": len(articles),
-                "sources_already_searched": searched,
-                "available_feeds": remaining,
-                "limits": f"At most {MAX_RESEARCH_ROUNDS} total research rounds. Select a feed exactly from available_feeds or choose finish.",
-                "response_format": '{"action":"research|finish","feed":"exact URL or null","reason":"short explanation"}',
-            }
-            response = create_chat_model(temperature=0, timeout=20).invoke(
-                "Choose the next research step. Return only JSON.\n" + json.dumps(prompt)
-            )
-            raw = str(response.content).strip().removeprefix("```json").removesuffix("```").strip()
-            decision = json.loads(raw)
-            feed = decision.get("feed")
-            if decision.get("action") == "research" and feed in remaining:
-                logger.info("Research planner selected %s: %s", feed, decision.get("reason", ""))
-                return {"next_feed": feed, "research_decision": str(decision.get("reason", "continue research"))}
-            if decision.get("action") == "finish":
-                return {"next_feed": None, "research_decision": str(decision.get("reason", "research complete"))}
-            logger.warning("Research planner returned an invalid choice; using bounded fallback")
-        except Exception:
-            logger.exception("Research planning failed; using bounded fallback")
-
-    # A deterministic fallback keeps the workflow useful without model access.
-    feed = remaining[0]
-    return {"next_feed": feed, "research_decision": "Continue with an unsearched configured source."}
+            data = json.loads(content.removeprefix("```json").removesuffix("```").strip())
+            return [Article.model_validate(item) for item in data if isinstance(item, dict)]
+        except (json.JSONDecodeError, TypeError, ValueError):
+            logger.warning("Research agent returned invalid article JSON")
+            return []
 
 
-def collect_from_selected_feed(state: NewsState) -> dict[str, object]:
-    from app.agents.research_agent import research
+research_agent = ResearchAgent()
 
-    feed = state.get("next_feed")
-    if not feed or feed not in RSS_FEEDS:
-        return {"next_feed": None}
-    found = research(feed).get("articles", [])
-    existing = state.get("articles", [])
-    known_urls = {str(article.url) for article in existing}
-    combined = existing + [article for article in found if str(article.url) not in known_urls]
-    searched = state.get("searched_feeds", [])
-    note = f"{feed}: collected {len(found)} articles, {len(combined) - len(existing)} new after deduplication."
-    logger.info(note)
+
+def _current_week(articles: list[Article]) -> list[Article]:
+    now = datetime.now().astimezone()
+    start_date = now.date() - timedelta(days=now.weekday())
+    start = datetime.combine(start_date, time.min, tzinfo=now.tzinfo)
+    return [
+        article for article in articles
+        if article.published_at is not None
+        and start <= article.published_at.astimezone(now.tzinfo) <= now
+    ]
+
+
+def _local_research() -> list[Article]:
+    """Fallback for installations without Groq credentials."""
+    from app.tools.news_sources import enrich_articles
+
+    articles = deduplicate(_current_week(load_rss_articles(RSS_FEEDS)))
+    return enrich_articles(articles[:60])
+
+
+def research_node(state: NewsState) -> dict[str, object]:
+    request = "Find relevant technology news published this week. Search RSS feeds and Google when useful."
+    if A2A_RESEARCH_AGENT_URL:
+        from app.agents.a2a_client import request_research
+
+        articles = request_research(request)
+    else:
+        articles = research_agent.invoke(request)
     return {
-        "articles": combined,
-        "searched_feeds": searched + [feed],
-        "research_rounds": state.get("research_rounds", 0) + 1,
-        "research_notes": state.get("research_notes", []) + [note],
+        "articles": deduplicate(_current_week(articles)),
+        "research_notes": [f"research_agent collected {len(articles)} candidate articles."],
     }
