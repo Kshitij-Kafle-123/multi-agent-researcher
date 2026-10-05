@@ -10,7 +10,7 @@ from datetime import datetime, time, timedelta
 from app.config import APP_TIMEZONE
 from app.schemas import Article, TrendReport
 
-COOKIE_NAME = "tech_news_daily_v1"
+COOKIE_NAME = "tech_news_daily_v3"
 MAX_COOKIE_VALUE_LENGTH = 3600
 MAX_DECOMPRESSED_BYTES = 128_000
 

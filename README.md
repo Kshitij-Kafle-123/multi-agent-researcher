@@ -12,7 +12,7 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-Copy `.env.example` to `.env`. Set `GROQ_API_KEY` to enable autonomous source selection and a separate AI summary for every collected technology story. The default model is `openai/gpt-oss-120b`; change `GROQ_MODEL` if you prefer another model enabled for your Groq account. Without a key, the workflow deterministically checks configured feeds and shows article excerpts instead. News collection uses public RSS feeds and does not require a news API key.
+Copy `.env.example` to `.env`. Set `GROQ_API_KEY` to enable autonomous source selection and Groq summaries for every collected technology story. The default model is `openai/gpt-oss-120b`; change `GROQ_MODEL` if you prefer another model enabled for your Groq account. A Groq key is required to generate a digest with technology stories; the app reports an error instead of substituting raw article excerpts when Groq is unavailable. Streamlit deployments can provide `GROQ_API_KEY` and `GROQ_MODEL` through `st.secrets`. News collection uses public RSS feeds and does not require a news API key.
 
 ## Run
 

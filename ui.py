@@ -37,7 +37,7 @@ st.caption("This week’s technology stories, gathered through a bounded autonom
 if GROQ_API_KEY:
     st.caption(f"AI summaries: Groq · {GROQ_MODEL}")
 else:
-    st.warning("GROQ_API_KEY is missing. Add it to the project’s .env file and restart Streamlit to generate AI summaries.")
+    st.warning("GROQ_API_KEY is missing. Add it to .env locally or the platform’s secrets settings before generating the digest.")
 
 cookie_manager = _cookie_manager()
 today = today_key()
@@ -45,8 +45,13 @@ cached_result = decode_daily_result(cookie_manager.get(COOKIE_NAME), today)
 if cached_result:
     st.session_state["news_result"] = cached_result
     st.session_state["news_result_day"] = today
-elif st.session_state.get("news_result_day") != today:
+    st.session_state["news_result_cache_version"] = 3
+elif (
+    st.session_state.get("news_result_day") != today
+    or st.session_state.get("news_result_cache_version") != 3
+):
     st.session_state.pop("news_result", None)
+    st.session_state.pop("news_result_day", None)
 
 already_generated_today = st.session_state.get("news_result_day") == today and st.session_state.get("news_result")
 if already_generated_today:
@@ -69,6 +74,7 @@ elif st.button("Fetch and analyze this week’s news", type="primary"):
             restored_result["summary_truncated"] = summary_truncated
             st.session_state["news_result"] = restored_result
             st.session_state["news_result_day"] = today
+            st.session_state["news_result_cache_version"] = 3
             st.session_state.pop("news_error", None)
     except Exception as exc:
         logger.exception("Web UI news workflow failed")
